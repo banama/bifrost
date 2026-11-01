@@ -100,6 +100,8 @@ pub(super) fn build_command_spec(
                 args.push(session_id);
             }
         }
+    } else if request.adapter == OPENCODE_ADAPTER {
+        opencode::configure_args(&mut args, request)?;
     } else if config.executable.is_none() && args.is_empty() {
         return Err(format!(
             "adapter '{}' requires explicit adapterConfig.args",

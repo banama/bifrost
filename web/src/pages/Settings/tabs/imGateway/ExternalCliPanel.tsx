@@ -50,6 +50,7 @@ const ADAPTER_OPTIONS = [
   { label: "Codex CLI", value: "codex" },
   { label: "Traex CLI", value: "traex" },
   { label: "Claude Code", value: "claude_code" },
+  { label: "OpenCode", value: "opencode" },
 ];
 
 function getDeliveryOptions(t: TFunction) {
@@ -89,6 +90,7 @@ function runnerToFormValues(runner: ExternalCliAgentSettings) {
     enabled: runner.enabled,
     adapter: runner.adapter,
     executable: runner.adapterConfig?.executable,
+    model: runner.adapterConfig?.model,
     args: runner.adapterConfig?.args?.join("\n"),
     permissionMode:
       runner.adapterConfig?.permissionMode && runner.adapterConfig.permissionMode !== "default"
@@ -100,7 +102,7 @@ function runnerToFormValues(runner: ExternalCliAgentSettings) {
   };
 }
 
-function formToRunner(values: Record<string, unknown>): ExternalCliAgentSettings {
+function formToRunner(values: Record<string, unknown>, previous?: ExternalCliAgentSettings): ExternalCliAgentSettings {
   const args = lines(values.args);
   const adapter = String(values.adapter || "codex").trim() || "codex";
 
@@ -109,11 +111,13 @@ function formToRunner(values: Record<string, unknown>): ExternalCliAgentSettings
     adapter,
     instructions: String(values.instructions || "").trim() || undefined,
     adapterConfig: {
-      ...(values.executable ? { executable: String(values.executable).trim() } : {}),
-      ...(args.length ? { args } : {}),
-      ...(values.permissionMode && String(values.permissionMode).trim() !== "default"
-        ? { permissionMode: String(values.permissionMode).trim() }
-        : {}),
+      ...(previous?.adapter === adapter ? previous.adapterConfig : {}),
+      model: String(values.model || "").trim() || undefined,
+      executable: String(values.executable || "").trim() || undefined,
+      args: args.length ? args : undefined,
+      permissionMode: values.permissionMode && String(values.permissionMode).trim() !== "default"
+        ? String(values.permissionMode).trim()
+        : undefined,
     },
     injectBifrostTools: false,
     skillPaths: lines(values.skillPaths),
@@ -243,7 +247,7 @@ export default function ExternalCliPanel({
         return;
       }
       const runners = { ...config.runners };
-      runners[runnerId] = formToRunner(values);
+      runners[runnerId] = formToRunner(values, config.runners[runnerId]);
       const next = {
         ...config,
         defaultRunnerId: config.defaultRunnerId || runnerId,
@@ -561,6 +565,9 @@ export default function ExternalCliPanel({
           </Form.Item>
                   <Form.Item name="executable" label={t("imGateway.externalCli.executable")}>
                     <Input placeholder="Codex" />
+                  </Form.Item>
+                  <Form.Item name="model" label={t("imGateway.externalCli.model")}>
+                    <Input placeholder="provider/model" />
                   </Form.Item>
                   <Form.Item name="args" label={t("imGateway.externalCli.arguments")}>
                     <Input.TextArea rows={3} placeholder={t("imGateway.externalCli.argumentsPlaceholder")} />

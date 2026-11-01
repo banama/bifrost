@@ -90,7 +90,9 @@ http://127.0.0.1:9900/_bifrost/
 bifrost install-skill -y
 ```
 
-ASR Daily Agent 支持把日报拆成独立研究问题，由明确配置的 Codex、Traex、Claude Code 或自定义 CLI Runner 执行。ChatGPT Web Runner 已移除；[迁移说明](design/remove-chatgpt-web-runner.md)。
+ASR Daily Agent 支持把日报拆成独立研究问题，由明确配置的 Codex、Traex、Claude Code、OpenCode 或自定义 CLI Runner 执行。ChatGPT Web Runner 已移除；[迁移说明](design/remove-chatgpt-web-runner.md)。
+
+IM Gateway 新增原生 `OpenCode` Runner（adapter: `opencode`），支持 CLI JSON 输出、独立会话续接、默认模型配置和 `/models`、`/model`。需自行安装 OpenCode；不自动启用权限绕过。开发版独立运行与限制见 [OpenCode 方案](design/opencode-runner.md)，真实模型验收状态见 [验收记录](human_tests/opencode-runner.md)。
 
 完整 Agent 组合、研究 manifest 和失败边界见 [`design/asr-daily-agent-pipeline.md`](design/asr-daily-agent-pipeline.md)。
 

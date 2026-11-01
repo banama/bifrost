@@ -1147,6 +1147,7 @@ pub(super) fn is_im_progress_card_external_adapter(adapter: &str) -> bool {
         "codex"
             | crate::im_gateway::external_cli::TRAEX_ADAPTER
             | crate::im_gateway::external_cli::CLAUDE_CODE_ADAPTER
+            | crate::im_gateway::external_cli::OPENCODE_ADAPTER
     )
 }
 
@@ -2669,6 +2670,7 @@ pub(in crate::handlers::im_gateway) fn apply_external_cli_resume_metadata(
         "codex"
             | crate::im_gateway::external_cli::TRAEX_ADAPTER
             | crate::im_gateway::external_cli::CLAUDE_CODE_ADAPTER
+            | crate::im_gateway::external_cli::OPENCODE_ADAPTER
     ) {
         return;
     }

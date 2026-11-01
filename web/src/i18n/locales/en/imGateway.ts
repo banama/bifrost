@@ -322,6 +322,7 @@ const en = {
   "externalCli.baseUrl": "Base URL",
   "externalCli.runTimeoutSeconds": "Run Timeout Seconds",
   "externalCli.pollIntervalMs": "Poll Interval Ms",
+  "externalCli.model": "Default model",
   "externalCli.executable": "Executable",
   "externalCli.arguments": "Arguments",
   "externalCli.argumentsPlaceholder": "One argument per line",

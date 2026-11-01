@@ -19,6 +19,7 @@ use bifrost_agent::{PlanStep, PlanStepStatus};
 use bifrost_core::EXTERNAL_CLI_WORKER_ENV;
 
 mod local_sessions;
+mod opencode;
 #[cfg(test)]
 pub(crate) use local_sessions::local_session_test_env_lock;
 pub use local_sessions::{
@@ -47,6 +48,8 @@ const DEFAULT_RUNTIME: &str = "external_cli";
 const DEFAULT_ADAPTER: &str = "codex";
 pub const CODEX_FAST_SERVICE_TIER: &str = "fast";
 pub const CODEX_STANDARD_SERVICE_TIER: &str = "default";
+pub const OPENCODE_ADAPTER: &str = "opencode";
+pub const DEFAULT_OPENCODE_RUNNER_ID: &str = "OpenCode";
 pub const TRAEX_ADAPTER: &str = "traex";
 pub const DEFAULT_CODEX_RUNNER_ID: &str = "Codex";
 pub const DEFAULT_TRAEX_RUNNER_ID: &str = "Traex";
@@ -2725,20 +2728,25 @@ impl ExternalCliRuntime {
                     title: Some("Stopped".to_string()),
                     raw: serde_json::json!({ "type": "run_stopped" }),
                 }]
+            } else if command_output.events.is_empty() {
+                parse_progress_events(&stdout_text)
             } else {
-                if command_output.events.is_empty() {
-                    parse_progress_events(&stdout_text)
-                } else {
-                    command_output.events.clone()
-                }
+                command_output.events.clone()
             };
-            let response = if was_stopped {
+            let response = if !was_stopped && request.adapter == OPENCODE_ADAPTER {
+                opencode::terminal_response(&events)
+            } else if was_stopped {
                 "External CLI run was stopped by request.".to_string()
             } else {
                 final_response(&last_message_path, &stdout_text, &events).await?
             };
             let status = if was_stopped {
                 ExternalCliRunStatus::Stopped
+            } else if request.adapter == OPENCODE_ADAPTER
+                && command_output.status == ExternalCliRunStatus::Succeeded
+                && !opencode::completed_successfully(&events)
+            {
+                ExternalCliRunStatus::Failed
             } else {
                 command_output.status
             };
@@ -3518,6 +3526,7 @@ fn append_external_cli_metadata(
                 .or_else(|| event.raw.get("threadId"))
                 .or_else(|| event.raw.get("session_id"))
                 .or_else(|| event.raw.get("sessionId"))
+                .or_else(|| event.raw.get("sessionID"))
                 .and_then(serde_json::Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
@@ -3547,6 +3556,7 @@ pub fn merge_external_cli_progress_metadata(
             .or_else(|| event.raw.get("threadId"))
             .or_else(|| event.raw.get("session_id"))
             .or_else(|| event.raw.get("sessionId"))
+            .or_else(|| event.raw.get("sessionID"))
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -3936,6 +3946,7 @@ pub async fn load_external_cli_model_catalog(
     let default_executable = match adapter {
         DEFAULT_ADAPTER => DEFAULT_ADAPTER,
         TRAEX_ADAPTER => TRAEX_ADAPTER,
+        OPENCODE_ADAPTER => OPENCODE_ADAPTER,
         _ => {
             return Err(format!(
                 "adapter `{adapter}` does not support model catalog"
@@ -3949,9 +3960,12 @@ pub async fn load_external_cli_model_catalog(
         .filter(|value| !value.is_empty())
         .unwrap_or(default_executable);
     let mut command = Command::new(executable);
+    if adapter != OPENCODE_ADAPTER {
+        command.arg("debug");
+    }
     command
-        .arg("debug")
         .arg("models")
+        .kill_on_drop(true)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(work_dir) = work_dir {
@@ -3985,6 +3999,9 @@ pub fn parse_external_cli_model_catalog(
     adapter: &str,
     raw_json: &str,
 ) -> Result<Vec<ExternalCliModelInfo>, String> {
+    if adapter == OPENCODE_ADAPTER {
+        return opencode::parse_model_catalog(raw_json);
+    }
     #[derive(Deserialize)]
     struct Catalog {
         #[serde(default)]
@@ -4410,6 +4427,10 @@ pub fn external_cli_default_model_label(adapter: &str) -> Option<(&'static str, 
             "Trae default model (not explicitly configured)",
             "trae default",
         )),
+        OPENCODE_ADAPTER => Some((
+            "OpenCode default model (not explicitly configured)",
+            "opencode default",
+        )),
         CLAUDE_CODE_ADAPTER => Some((
             "Claude Code default model (not explicitly configured)",
             "claude code default",
@@ -4423,6 +4444,7 @@ pub fn external_cli_model_adapter_label(adapter: &str) -> &'static str {
         DEFAULT_ADAPTER => "Codex",
         TRAEX_ADAPTER => "Traex",
         CLAUDE_CODE_ADAPTER => "Claude Code",
+        OPENCODE_ADAPTER => "OpenCode",
         _ => "External CLI",
     }
 }
@@ -4430,7 +4452,7 @@ pub fn external_cli_model_adapter_label(adapter: &str) -> &'static str {
 pub fn supports_external_cli_model_slash(adapter: &str) -> bool {
     matches!(
         adapter.trim(),
-        DEFAULT_ADAPTER | TRAEX_ADAPTER | CLAUDE_CODE_ADAPTER
+        DEFAULT_ADAPTER | TRAEX_ADAPTER | CLAUDE_CODE_ADAPTER | OPENCODE_ADAPTER
     )
 }
 
@@ -6744,6 +6766,7 @@ pub(super) fn expand_subagent_progress_event(
 #[derive(Default)]
 struct ExternalCliParseState {
     claude_tools: BTreeMap<String, ClaudeCodeToolContext>,
+    opencode: opencode::ParseState,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -6769,6 +6792,9 @@ fn parse_progress_event(
     raw: serde_json::Value,
     state: &mut ExternalCliParseState,
 ) -> Option<ExternalCliProgressEvent> {
+    if opencode::is_event(&raw) {
+        return opencode::parse_event(raw, &mut state.opencode);
+    }
     let event_type = value_text(&raw, &["type", "event", "kind"])?;
     if let Some(event) = parse_codex_cli_event(&event_type, &raw) {
         return Some(event);
@@ -7406,7 +7432,7 @@ fn accumulate_diff_block_stats(
 fn is_codex_like_adapter(adapter: &str) -> bool {
     matches!(
         adapter,
-        DEFAULT_ADAPTER | TRAEX_ADAPTER | CLAUDE_CODE_ADAPTER
+        DEFAULT_ADAPTER | TRAEX_ADAPTER | CLAUDE_CODE_ADAPTER | OPENCODE_ADAPTER
     )
 }
 
@@ -8218,6 +8244,9 @@ fn default_external_cli_runners() -> BTreeMap<String, ExternalCliAgentSettings> 
 
 fn ensure_default_external_cli_runners(runners: &mut BTreeMap<String, ExternalCliAgentSettings>) {
     runners
+        .entry(DEFAULT_OPENCODE_RUNNER_ID.to_string())
+        .or_insert_with(|| default_runner_settings(OPENCODE_ADAPTER));
+    runners
         .entry(DEFAULT_CODEX_RUNNER_ID.to_string())
         .or_insert_with(|| default_runner_settings(DEFAULT_ADAPTER));
     runners
@@ -8321,6 +8350,11 @@ pub fn canonical_external_cli_runner_id(
         return runner_id.to_string();
     }
     match runner_id.to_ascii_lowercase().as_str() {
+        "opencode" | "open-code" | "open code"
+            if config.runners.contains_key(DEFAULT_OPENCODE_RUNNER_ID) =>
+        {
+            DEFAULT_OPENCODE_RUNNER_ID.to_string()
+        }
         "codex" if config.runners.contains_key(DEFAULT_CODEX_RUNNER_ID) => {
             DEFAULT_CODEX_RUNNER_ID.to_string()
         }
