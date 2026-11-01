@@ -303,16 +303,12 @@ fn find_last_body_close_tag_start(body: &[u8]) -> Option<usize> {
         return None;
     }
 
-    for start in (0..=body.len() - PATTERN.len()).rev() {
-        if body[start..start + PATTERN.len()]
+    (0..=body.len() - PATTERN.len()).rev().find(|&start| {
+        body[start..start + PATTERN.len()]
             .iter()
             .zip(PATTERN.iter())
             .all(|(a, b)| a.eq_ignore_ascii_case(b))
-        {
-            return Some(start);
-        }
-    }
-    None
+    })
 }
 
 fn starts_with_html_marker(trimmed: &[u8]) -> bool {

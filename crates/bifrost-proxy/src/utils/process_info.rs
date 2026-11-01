@@ -1498,10 +1498,8 @@ async fn resolve_client_process_async_for_connection_with_retry_impl(
             }
             return cached;
         }
-    } else {
-        if let Some(cached) = PROCESS_RESOLVER.get_from_cache_for_connection_owned(&key) {
-            return cached;
-        }
+    } else if let Some(cached) = PROCESS_RESOLVER.get_from_cache_for_connection_owned(&key) {
+        return cached;
     }
 
     if !peer_addr.ip().is_loopback() {
