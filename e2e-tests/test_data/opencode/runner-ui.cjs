@@ -35,6 +35,28 @@ const { chromium, expect } = require(
         dialog.getByLabel("Default model", { exact: true }),
       ).toHaveValue("opencode/test");
       await expect(dialog.getByLabel("Adapter", { exact: true })).toBeVisible();
+      await expect(dialog.getByLabel("Arguments", { exact: true })).toHaveCount(
+        0,
+      );
+      await expect(
+        dialog.getByLabel("Permission Mode", { exact: true }),
+      ).toHaveCount(0);
+      // Switching back must not retain fields unsupported by OpenCode.
+      await dialog.getByLabel("Adapter", { exact: true }).click();
+      await page.getByText("Codex CLI", { exact: true }).last().click();
+      await dialog
+        .getByLabel("Arguments", { exact: true })
+        .fill("--unsafe-test-argument");
+      await dialog.getByLabel("Permission Mode", { exact: true }).click();
+      await page.getByText("Plan", { exact: true }).last().click();
+      await dialog.getByLabel("Adapter", { exact: true }).click();
+      await page.getByText("OpenCode", { exact: true }).last().click();
+      await expect(dialog.getByLabel("Arguments", { exact: true })).toHaveCount(
+        0,
+      );
+      await expect(
+        dialog.getByLabel("Permission Mode", { exact: true }),
+      ).toHaveCount(0);
       await dialog
         .getByLabel("Default model", { exact: true })
         .fill("opencode/changed");
@@ -49,6 +71,10 @@ const { chromium, expect } = require(
         "opencode/changed",
       );
       expect(config.runners.OpenCode.adapterConfig.timeoutSecs).toBe(10);
+      expect(config.runners.OpenCode.adapterConfig.args ?? []).toEqual([]);
+      expect(
+        config.runners.OpenCode.adapterConfig.permissionMode ?? "default",
+      ).toBe("default");
       await row.getByRole("button", { name: /Edit/ }).click();
       await expect(
         dialog.getByLabel("Default model", { exact: true }),

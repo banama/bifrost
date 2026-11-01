@@ -18,13 +18,19 @@ root = pathlib.Path(sys.argv[1])
 with tempfile.TemporaryDirectory(prefix='bifrost-opencode-e2e-') as directory:
     data = pathlib.Path(directory)
     fixture = data / 'opencode-fixture'
-    fixture.write_text('#!' + sys.executable + '\n' + '''import json,sys
+    fixture.write_text('#!' + sys.executable + '\n' + '''import json,sys,pathlib
 args=sys.argv[1:]
 if args == ['--version']: print('fixture'); sys.exit(0)
 if args == ['models']: print('opencode/test'); sys.exit(0)
+prompt=sys.stdin.read()
+if 'custom_error' in prompt:
+ print(json.dumps({'type':'error','sessionID':'custom','content':'quota denied'}));sys.exit(1)
+if 'startup_error' in prompt:
+ print('ModelNotFound: provider/example is unavailable',file=sys.stderr);sys.exit(1)
 assert args[:3] == ['run','--format','json'],args
 assert args[args.index('--model')+1] == 'opencode/test',args
-prompt=sys.stdin.read()
+directory=pathlib.Path(args[args.index('--dir')+1])
+assert directory.is_absolute() and directory.resolve() == pathlib.Path.cwd(),args
 if 'force_error' in prompt:
  print(json.dumps({'type':'error','sessionID':'ses_e2e','error':{'message':'fixture quota denied'}}));sys.exit(0)
 resumed='--session' in args
@@ -58,17 +64,20 @@ for event in [
         config=request('/im-gateway/chat/config')
         assert config['runners']['OpenCode']['adapter']=='opencode',config.keys()
         config['runners']['OpenCode']['adapterConfig']={'executable':str(fixture),'model':'opencode/test','timeoutSecs':10}
+        config['runners']['CustomReview']={'enabled':True,'adapter':'custom','adapterConfig':{'executable':str(fixture),'timeoutSecs':10}}
         request('/im-gateway/chat/config',config,'PATCH')
         if os.environ.get('BIFROST_OPENCODE_UI_TEST') == '1':
             subprocess.run(['node',str(root/'e2e-tests/test_data/opencode/runner-ui.cjs'),str(root),f'http://127.0.0.1:{port}'],check=True,timeout=90)
-        def chat(message, session='opencode-e2e'):
-            events=request('/im-gateway/chat/stream',{'message':message,'sessionKey':session,'runnerId':'OpenCode','runtime':'external_cli'},'POST',True)
+        def chat(message, session='opencode-e2e', runner='OpenCode'):
+            events=request('/im-gateway/chat/stream',{'message':message,'sessionKey':session,'runnerId':runner,'runtime':'external_cli'},'POST',True)
             finished=[e for e in events if e.get('eventType')=='run_finished']
             assert len(finished)==1,[(e.get('eventType'),e.get('status')) for e in events]
             return finished[0]
         first=chat('first');assert first['status']=='succeeded' and first['response']=='NEW',first
         second=chat('second');assert second['status']=='succeeded' and second['response']=='RESUMED',second
         failure=chat('force_error','opencode-failure');assert failure['status']=='failed' and 'quota denied' in failure['response'],failure
+        startup=chat('startup_error','opencode-startup');assert startup['status']=='failed' and startup['response']=='ModelNotFound: provider/example is unavailable',startup
+        custom=chat('custom_error','custom-failure','CustomReview');assert custom['status']=='failed' and custom['response']=='quota denied',custom
         print('PASS: OpenCode registration, model flag, JSON stream, session continuation and error-with-zero-exit through real Bifrost API')
     finally:
         if process.poll() is None:

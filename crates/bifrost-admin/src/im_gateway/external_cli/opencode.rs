@@ -30,7 +30,12 @@ pub(super) fn configure_args(
     if !args.is_empty() {
         return Err("OpenCode native adapter does not support adapterConfig.args".to_string());
     }
-    args.extend(["run".into(), "--format".into(), "json".into()]);
+    // OpenCode resolves even a relative --dir against inherited PWD. Give it
+    // the absolute target so it agrees with the command's current_dir.
+    let work_dir = std::path::absolute(request.work_dir.as_deref().unwrap_or(Path::new(".")))
+        .map_err(|error| format!("resolve OpenCode work directory failed: {error}"))?;
+    args.extend(["run", "--format", "json", "--dir"].map(str::to_string));
+    args.push(work_dir.to_string_lossy().into_owned());
     if let Some(model) = request
         .adapter_config
         .model
@@ -223,7 +228,11 @@ pub(super) fn completed_successfully(events: &[ExternalCliProgressEvent]) -> boo
         .any(|e| e.event_type == ExternalCliProgressEventType::RunFailed)
 }
 
-pub(super) fn terminal_response(events: &[ExternalCliProgressEvent]) -> String {
+pub(super) fn terminal_response(
+    events: &[ExternalCliProgressEvent],
+    status: ExternalCliRunStatus,
+    stderr: &str,
+) -> String {
     if let Some(error) = events
         .iter()
         .rev()
@@ -231,13 +240,19 @@ pub(super) fn terminal_response(events: &[ExternalCliProgressEvent]) -> String {
     {
         return error.content.clone();
     }
-    events
-        .iter()
-        .rev()
-        .find(|e| e.event_type == ExternalCliProgressEventType::RunFinished)
-        .map(|e| e.content.clone())
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "OpenCode exited without a completed text response.".into())
+    if status == ExternalCliRunStatus::Succeeded {
+        if let Some(event) = events.iter().rev().find(|e| {
+            e.event_type == ExternalCliProgressEventType::RunFinished
+                && !e.content.trim().is_empty()
+        }) {
+            return event.content.clone();
+        }
+    }
+    if status == ExternalCliRunStatus::Failed && stderr.trim().is_empty() {
+        return "OpenCode exited without a completed text response.".into();
+    }
+    // Preserve stderr and timeout diagnostics; raw protocol JSON is never a reply.
+    visible_terminal_response(status, String::new(), "", stderr, events)
 }
 
 #[cfg(test)]
@@ -297,7 +312,13 @@ printf '%s\n' '{"type":"step_start","sessionID":"ses_test","part":{}}' '{"type":
                 "timeout",
                 "sleep 20",
                 ExternalCliRunStatus::TimedOut,
-                "OpenCode exited without a completed text response.",
+                "external cli timed out after 1 seconds",
+            ),
+            (
+                "stderr",
+                "echo 'ModelNotFound: provider/example is unavailable' >&2; exit 1",
+                ExternalCliRunStatus::Failed,
+                "ModelNotFound: provider/example is unavailable",
             ),
         ] {
             let executable = temp.path().join(name);
@@ -349,7 +370,7 @@ printf '%s\n' '{"type":"step_start","sessionID":"ses_test","part":{}}' '{"type":
         .unwrap();
         assert!(!completed_successfully(&[text]));
         assert_eq!(
-            terminal_response(&[]),
+            terminal_response(&[], ExternalCliRunStatus::Failed, ""),
             "OpenCode exited without a completed text response."
         );
         let error = parse_event(
@@ -358,26 +379,32 @@ printf '%s\n' '{"type":"step_start","sessionID":"ses_test","part":{}}' '{"type":
         )
         .unwrap();
         assert!(!completed_successfully(std::slice::from_ref(&error)));
-        assert_eq!(terminal_response(&[error]), "denied");
+        assert_eq!(
+            terminal_response(&[error], ExternalCliRunStatus::Failed, ""),
+            "denied"
+        );
     }
 
     #[test]
     fn opencode_command_uses_explicit_session_and_model() {
+        let work_dir = tempfile::tempdir().unwrap();
         let mut request: ExternalCliRunRequest = serde_json::from_value(json!({
             "message":"secret prompt stays on stdin", "adapter":"opencode",
-            "workDir":"work", "params":{"threadId":"ses_123"},
+            "workDir":work_dir.path(), "params":{"threadId":"ses_123"},
             "adapterConfig":{"model":"opencode/deepseek-v4.1-flash-free", "reasoningEffort":"high"}
         }))
         .unwrap();
         let spec = build_command_spec(&request, Path::new("last.md")).unwrap();
         assert_eq!(spec.executable, "opencode");
-        assert_eq!(spec.work_dir, Some(PathBuf::from("work")));
+        assert_eq!(spec.work_dir.as_deref(), Some(work_dir.path()));
         assert_eq!(
             spec.args,
             [
                 "run",
                 "--format",
                 "json",
+                "--dir",
+                work_dir.path().to_str().unwrap(),
                 "--model",
                 "opencode/deepseek-v4.1-flash-free",
                 "--session",
@@ -409,7 +436,7 @@ printf '%s\n' '{"type":"step_start","sessionID":"ses_test","part":{}}' '{"type":
 
     #[test]
     fn opencode_text_parts_and_terminal_step() {
-        let events = parse_progress_events(
+        let events = parse_progress_events_for_adapter(
             &[
                 json!({"type":"step_start","sessionID":"ses_root","part":{}}),
                 json!({"type":"text","sessionID":"ses_root","part":{"id":"a","text":"Hello "}}),
@@ -422,6 +449,7 @@ printf '%s\n' '{"type":"step_start","sessionID":"ses_test","part":{}}' '{"type":
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("\n"),
+            OPENCODE_ADAPTER,
         );
         assert_eq!(events.len(), 4);
         assert_eq!(
@@ -496,11 +524,26 @@ printf '%s\n' '{"type":"step_start","sessionID":"ses_test","part":{}}' '{"type":
         )
         .is_none());
         assert!(parse_event(json!({"type":"text","sessionID":123}), &mut state).is_none());
-        let mut args = vec![];
         request.operation = "ask".into();
         request.params = json!({"sessionID":"ses_alt"});
-        configure_args(&mut args, &request).unwrap();
-        assert_eq!(args, ["run", "--format", "json", "--session", "ses_alt"]);
+        for work_dir in [None, Some(PathBuf::from("."))] {
+            request.work_dir = work_dir;
+            let mut args = vec![];
+            configure_args(&mut args, &request).unwrap();
+            let current_dir = std::env::current_dir().unwrap();
+            assert_eq!(
+                args,
+                [
+                    "run",
+                    "--format",
+                    "json",
+                    "--dir",
+                    current_dir.to_str().unwrap(),
+                    "--session",
+                    "ses_alt"
+                ]
+            );
+        }
     }
 
     #[test]
@@ -513,6 +556,15 @@ printf '%s\n' '{"type":"step_start","sessionID":"ses_test","part":{}}' '{"type":
         assert_eq!(
             events[0].event_type,
             ExternalCliProgressEventType::AssistantFinal
+        );
+        let errors = parse_progress_events(
+            r#"{"type":"error","sessionID":"custom","content":"quota denied"}"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].content, "quota denied");
+        assert_eq!(
+            errors[0].event_type,
+            ExternalCliProgressEventType::RunFailed
         );
     }
 

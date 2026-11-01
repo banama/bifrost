@@ -2706,7 +2706,7 @@ impl ExternalCliRuntime {
                 ExternalCliTransport::Exec => {
                     run_command(
                         &run_id,
-                        session_key_for_stop.as_deref(),
+                        &request,
                         spec.clone(),
                         prompt.clone(),
                         stop_marker_path.clone(),
@@ -2729,16 +2729,9 @@ impl ExternalCliRuntime {
                     raw: serde_json::json!({ "type": "run_stopped" }),
                 }]
             } else if command_output.events.is_empty() {
-                parse_progress_events(&stdout_text)
+                parse_progress_events_for_adapter(&stdout_text, &request.adapter)
             } else {
                 command_output.events.clone()
-            };
-            let response = if !was_stopped && request.adapter == OPENCODE_ADAPTER {
-                opencode::terminal_response(&events)
-            } else if was_stopped {
-                "External CLI run was stopped by request.".to_string()
-            } else {
-                final_response(&last_message_path, &stdout_text, &events).await?
             };
             let status = if was_stopped {
                 ExternalCliRunStatus::Stopped
@@ -2751,6 +2744,13 @@ impl ExternalCliRuntime {
                 command_output.status
             };
             let stderr_text = String::from_utf8_lossy(&command_output.stderr).to_string();
+            let response = if !was_stopped && request.adapter == OPENCODE_ADAPTER {
+                opencode::terminal_response(&events, status.clone(), &stderr_text)
+            } else if was_stopped {
+                "External CLI run was stopped by request.".to_string()
+            } else {
+                final_response(&last_message_path, &stdout_text, &events).await?
+            };
             let response = visible_terminal_response(
                 status.clone(),
                 response,
@@ -5458,12 +5458,13 @@ fn plan_status_count(plan: &[serde_json::Value], status: &str) -> u64 {
 
 async fn run_command(
     run_id: &str,
-    session_key: Option<&str>,
+    request: &ExternalCliRunRequest,
     spec: CommandSpec,
     prompt: String,
     stop_marker_path: PathBuf,
     progress_tx: Option<mpsc::Sender<ExternalCliProgressEvent>>,
 ) -> Result<CommandOutput, String> {
+    let session_key = request.session_key.as_deref();
     let (stdout_path, stderr_path) = external_cli_log_paths(&stop_marker_path);
     let mut command = Command::new(&spec.executable);
     command
@@ -5508,7 +5509,11 @@ async fn run_command(
         tee_external_cli_output(stdout, stdout_path.clone(), "stdout").await?;
     let (stderr, stderr_tee_task) =
         tee_external_cli_output(stderr, stderr_path.clone(), "stderr").await?;
-    let stdout_task = tokio::spawn(read_stdout_events(stdout, progress_tx));
+    let stdout_task = tokio::spawn(read_stdout_events(
+        stdout,
+        progress_tx,
+        request.adapter.clone(),
+    ));
     let stderr_task = tokio::spawn(read_stderr_lines(stderr));
 
     let wait_result = {
@@ -5805,6 +5810,7 @@ async fn wait_for_stop_marker(path: PathBuf) {
 async fn read_stdout_events<R>(
     stdout: R,
     progress_tx: Option<mpsc::Sender<ExternalCliProgressEvent>>,
+    adapter: String,
 ) -> Result<(Vec<u8>, Vec<ExternalCliProgressEvent>), String>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -5812,7 +5818,7 @@ where
     let mut lines = tokio::io::BufReader::new(stdout).lines();
     let mut bytes = Vec::new();
     let mut events = Vec::new();
-    let mut parse_state = ExternalCliParseState::default();
+    let mut parse_state = ExternalCliParseState::for_adapter(&adapter);
     let mut tool_started_at: HashMap<String, u64> = HashMap::new();
     while let Some(line) = lines
         .next_line()
@@ -6682,8 +6688,12 @@ fn windows_process_exists(pid: u32) -> bool {
 }
 
 pub fn parse_progress_events(stdout: &str) -> Vec<ExternalCliProgressEvent> {
+    parse_progress_events_for_adapter(stdout, "")
+}
+
+fn parse_progress_events_for_adapter(stdout: &str, adapter: &str) -> Vec<ExternalCliProgressEvent> {
     let mut events = Vec::new();
-    let mut state = ExternalCliParseState::default();
+    let mut state = ExternalCliParseState::for_adapter(adapter);
     for line in stdout.lines() {
         if let Some(event) = parse_progress_event_line_with_state(line, &mut state) {
             events.extend(expand_subagent_progress_event(event));
@@ -6766,7 +6776,16 @@ pub(super) fn expand_subagent_progress_event(
 #[derive(Default)]
 struct ExternalCliParseState {
     claude_tools: BTreeMap<String, ClaudeCodeToolContext>,
-    opencode: opencode::ParseState,
+    opencode: Option<opencode::ParseState>,
+}
+
+impl ExternalCliParseState {
+    fn for_adapter(adapter: &str) -> Self {
+        Self {
+            opencode: (adapter == OPENCODE_ADAPTER).then(opencode::ParseState::default),
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -6792,8 +6811,10 @@ fn parse_progress_event(
     raw: serde_json::Value,
     state: &mut ExternalCliParseState,
 ) -> Option<ExternalCliProgressEvent> {
-    if opencode::is_event(&raw) {
-        return opencode::parse_event(raw, &mut state.opencode);
+    if let Some(opencode) = state.opencode.as_mut() {
+        if opencode::is_event(&raw) {
+            return opencode::parse_event(raw, opencode);
+        }
     }
     let event_type = value_text(&raw, &["type", "event", "kind"])?;
     if let Some(event) = parse_codex_cli_event(&event_type, &raw) {

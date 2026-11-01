@@ -17,7 +17,7 @@
 | 文件 | 功能模块 | 测试用例数 | 说明 |
 |------|---------|-----------|------|
 | [remove-chatgpt-web-runner.md](./remove-chatgpt-web-runner.md) | ChatGPT Web Runner 退役 | 3 | 旧配置与 API/CLI 拒绝、数据保留、显式迁移、UI 入口消失及其他 Runner 回归。 |
-| [opencode-runner.md](./opencode-runner.md) | OpenCode Runner | 5 | CLI 能力、JSON 协议、会话续接、停止及开发设置；记录外部模型阻塞。 |
+| [opencode-runner.md](./opencode-runner.md) | OpenCode Runner | 9 | 真实模型新建/续聊、停止、目录隔离与 P2 回归；单独记录免费模型额度阻塞。 |
 | [im-gateway-external-cli-chat-gateway.md](./im-gateway-external-cli-chat-gateway.md) | Agent Custom Runner / Chat Gateway | 75 | 支持的 Runner、配置与会话回归；已移除退役浏览器 Runner 的场景。 |
 | [qwen3-asr-local-server.md](./qwen3-asr-local-server.md) | Qwen3-ASR 本地 API Server + WebUI | 28 | 支持的 Runner、配置与会话回归；已移除退役浏览器 Runner 的场景。 |
 | [ci-e2e-runner.md](./ci-e2e-runner.md) | CI E2E Runner 并发稳定性 | 1 | 支持的 Runner、配置与会话回归；已移除退役浏览器 Runner 的场景。 |

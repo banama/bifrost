@@ -102,7 +102,10 @@ function runnerToFormValues(runner: ExternalCliAgentSettings) {
   };
 }
 
-function formToRunner(values: Record<string, unknown>, previous?: ExternalCliAgentSettings): ExternalCliAgentSettings {
+function formToRunner(
+  values: Record<string, unknown>,
+  previous?: ExternalCliAgentSettings,
+): ExternalCliAgentSettings {
   const args = lines(values.args);
   const adapter = String(values.adapter || "codex").trim() || "codex";
 
@@ -114,15 +117,19 @@ function formToRunner(values: Record<string, unknown>, previous?: ExternalCliAge
       ...(previous?.adapter === adapter ? previous.adapterConfig : {}),
       model: String(values.model || "").trim() || undefined,
       executable: String(values.executable || "").trim() || undefined,
-      args: args.length ? args : undefined,
-      permissionMode: values.permissionMode && String(values.permissionMode).trim() !== "default"
-        ? String(values.permissionMode).trim()
-        : undefined,
+      args: adapter !== "opencode" && args.length ? args : undefined,
+      permissionMode:
+        adapter !== "opencode" &&
+        values.permissionMode &&
+        String(values.permissionMode).trim() !== "default"
+          ? String(values.permissionMode).trim()
+          : undefined,
     },
     injectBifrostTools: false,
     skillPaths: lines(values.skillPaths),
     deliveryMode:
-      (values.deliveryMode as ExternalCliAgentSettings["deliveryMode"]) || "final_reply",
+      (values.deliveryMode as ExternalCliAgentSettings["deliveryMode"]) ||
+      "final_reply",
   };
 }
 
@@ -147,6 +154,7 @@ export default function ExternalCliPanel({
   const [runnerModalOpen, setRunnerModalOpen] = useState(false);
   const [editingRunnerId, setEditingRunnerId] = useState<string | null>(null);
   const [runnerForm] = Form.useForm();
+  const runnerAdapter = Form.useWatch("adapter", runnerForm);
   const [channelForm] = Form.useForm();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -563,30 +571,69 @@ export default function ExternalCliPanel({
           <Form.Item name="adapter" label={t("imGateway.externalCli.adapter")}>
             <Select options={ADAPTER_OPTIONS} />
           </Form.Item>
-                  <Form.Item name="executable" label={t("imGateway.externalCli.executable")}>
-                    <Input placeholder="Codex" />
-                  </Form.Item>
-                  <Form.Item name="model" label={t("imGateway.externalCli.model")}>
-                    <Input placeholder="provider/model" />
-                  </Form.Item>
-                  <Form.Item name="args" label={t("imGateway.externalCli.arguments")}>
-                    <Input.TextArea rows={3} placeholder={t("imGateway.externalCli.argumentsPlaceholder")} />
-                  </Form.Item>
-                  <Form.Item name="permissionMode" label={t("imGateway.externalCli.permissionMode")}>
-                    <Select
-                      allowClear
-                      options={[
-                        { label: t("imGateway.externalCli.permHeadlessDefault"), value: "" },
-                        { label: t("imGateway.externalCli.permPlan"), value: "plan" },
-                        { label: t("imGateway.externalCli.permBypass"), value: "bypass_permissions" },
-                        { label: t("imGateway.externalCli.permAuto"), value: "auto" },
-                        { label: t("imGateway.externalCli.permCustom"), value: "custom" },
-                      ]}
-                    />
-                  </Form.Item>
-                  <Form.Item name="skillPaths" label={t("imGateway.externalCli.skillPaths")}>
-                    <Input.TextArea rows={3} placeholder={t("imGateway.externalCli.skillPathsPlaceholder")} />
-                  </Form.Item>
+          <Form.Item
+            name="executable"
+            label={t("imGateway.externalCli.executable")}
+          >
+            <Input placeholder="Codex" />
+          </Form.Item>
+          <Form.Item name="model" label={t("imGateway.externalCli.model")}>
+            <Input placeholder="provider/model" />
+          </Form.Item>
+          {runnerAdapter !== "opencode" && (
+            <>
+              <Form.Item
+                name="args"
+                preserve={false}
+                label={t("imGateway.externalCli.arguments")}
+              >
+                <Input.TextArea
+                  rows={3}
+                  placeholder={t("imGateway.externalCli.argumentsPlaceholder")}
+                />
+              </Form.Item>
+              <Form.Item
+                name="permissionMode"
+                preserve={false}
+                label={t("imGateway.externalCli.permissionMode")}
+              >
+                <Select
+                  allowClear
+                  options={[
+                    {
+                      label: t("imGateway.externalCli.permHeadlessDefault"),
+                      value: "",
+                    },
+                    {
+                      label: t("imGateway.externalCli.permPlan"),
+                      value: "plan",
+                    },
+                    {
+                      label: t("imGateway.externalCli.permBypass"),
+                      value: "bypass_permissions",
+                    },
+                    {
+                      label: t("imGateway.externalCli.permAuto"),
+                      value: "auto",
+                    },
+                    {
+                      label: t("imGateway.externalCli.permCustom"),
+                      value: "custom",
+                    },
+                  ]}
+                />
+              </Form.Item>
+            </>
+          )}
+          <Form.Item
+            name="skillPaths"
+            label={t("imGateway.externalCli.skillPaths")}
+          >
+            <Input.TextArea
+              rows={3}
+              placeholder={t("imGateway.externalCli.skillPathsPlaceholder")}
+            />
+          </Form.Item>
           <Form.Item name="deliveryMode" label={t("imGateway.externalCli.defaultImDelivery")}>
             <Select options={deliveryOptions} />
           </Form.Item>

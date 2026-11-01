@@ -1,12 +1,24 @@
 # OpenCode runner plan
 
+## P2 correction verification plan
+
+Work starts from a clean `feat/opencode-runner` at `fe182827`; the current worktree is reused because it has no unrelated changes. Scope is Rust runner parsing/error propagation and frontend runner settings.
+
+- [x] Preserve custom-runner errors carrying `sessionID`; enable native parsing only for OpenCode.
+- [x] Preserve stderr-only failures and timeout diagnostics without exposing raw protocol JSON.
+- [x] Hide unsupported OpenCode settings, clear stale form values and verify adapter switches in light/dark UI.
+- [ ] Run focused backend/frontend tests, API/UI E2E, fmt, workspace Clippy, workspace tests and changed-line coverage (90% gate).
+- [x] Reattempt installed OpenCode new-session/continuation/cancellation acceptance using isolated Bifrost data/work and recorded process groups; configured model passed, free model quota is exhausted.
+- [x] Complete two review/test rounds and update human-test evidence; final independent Standards/Spec reviews found no additional P0/P1/P2.
+- [ ] Publish to the existing draft PR and inspect CI through the PAT skill; the CI inspector remains blocked by missing GITHUB_TOKEN.
+
 Use native `opencode run --format json` with the existing exec worker. Preserve existing runners and channel isolation. Never automatically enable permission bypass. The built-in runner follows OpenCode defaults; deployment may select `opencode/deepseek-v4.1-flash-free` explicitly.
 
 ## Verification tasks
 
 - [x] Startup: clean main at ebadd7f6; task branch feat/opencode-runner.
 - [x] Backend/UI route: command construction, event parsing, session metadata, models, built-in runner and settings choice.
-- [ ] Required: new/continued sessions, explicit model, text/tool/error events, stop, timeout and process cleanup.
+- [x] Required: new/continued sessions, explicit model, text/tool/error events, stop, timeout and process cleanup.
 - [x] Unit tests: command flags; sessionID metadata; multiple text parts; intermediate tool steps; error/unknown events; model catalog; existing-runner regression.
 - [ ] Real CLI checks: isolated temporary directory, free-model new session and continuation; cancellation. Record human_tests/opencode-runner.md results immediately after defining cases.
 - [ ] Rust checks: fmt, workspace clippy, affected unit tests, changed-line coverage and workspace tests.
@@ -26,6 +38,7 @@ Production switch is a separate deployment step: back up configuration, graceful
 
 - Adapter and runner: `opencode` / `OpenCode`; CLI provider setup accepts case-insensitive `opencode`.
 - Use exec transport, prompt on stdin, explicit `--session` from channel metadata. Never use global `--continue`.
+- Pass an absolute `--dir` matching the process work directory; OpenCode 1.19.3 resolves relative values against inherited PWD. Native parsing is enabled only for the OpenCode adapter.
 - JSON `sessionID` becomes Bifrost thread metadata. Child-session output is ignored. Completed text parts are streamed as deltas; only a terminal step produces the final response. Tool-call intermediate steps are not terminal.
 - JSON errors and missing terminal text fail the run even when the CLI exits zero. Raw JSON is never used as a final reply.
 - Models come from `opencode models`; `adapterConfig.model` becomes `--model`. Reasoning effort, if explicitly supplied through config, becomes `--variant`; supported variants are provider-specific and are not advertised as a universal list.
@@ -53,7 +66,7 @@ Round 1: reviewed command construction, JSON normalization, default registration
 
 Round 2: reviewed status preservation, terminal responses, permission boundaries and configuration round-trip. Corrected timeout classification so a timeout is not rewritten as a protocol failure; added timeout, zero-exit-error and incomplete-stream runtime tests. Preserved existing non-form adapter settings when saving the new default-model field. A further review is required after these corrections.
 
-Validation boundaries: installed OpenCode 1.19.3 lists the requested free model, but three no-tools free-model probes timed out before producing JSON. No real model response or real continuation is claimed. Workspace clippy currently reports pre-existing `manual_find` in proxy transform/badge.rs and `collapsible_else_if` in proxy utils/process_info.rs. Frontend formatter also reports failures on all four modified frontend files in the untouched HEAD baseline; broad reformatting is intentionally excluded. GitHub fork/push requires GITHUB_TOKEN, which is unavailable in this environment.
+Original round-2 boundaries (superseded by the latest status below): OpenCode 1.19.3 listed the free model, but three probes timed out without JSON; no real reply was claimed at that stage. Clippy then reported two proxy baseline warnings, later fixed separately. Frontend formatting already failed on all four original modified files; only the touched serializer/form region is formatted in this correction. GitHub publication uses the connected GitHub app; the required CI inspector still needs the unavailable GITHUB_TOKEN.
 
 Round 3: rechecked latest diff and untracked files after the second-round fixes. The isolated real API E2E passed again. Playwright light/dark default-model save/reopen passed and verified preservation of existing timeout configuration. Fixed test-only accessible-button locators and ensured the UI E2E builds fresh frontend assets before embedding them. External real-model acceptance remains blocked; it is reported separately from fixture-backed API acceptance.
 
@@ -65,12 +78,18 @@ Round 3: rechecked latest diff and untracked files after the second-round fixes.
 | Proxy lint baseline regression | badge 28 PASS; process_info 30 PASS |
 | Workspace Clippy, all targets/features | PASS after two semantics-preserving lint fixes in a separate commit |
 | Frontend TypeScript/build and selection unit test | PASS |
-| Real development API and Playwright UI | PASS with deterministic executable fixture; light/dark default-model round-trip preserves timeout |
-| Full workspace tests | BLOCKED: admin 3529 PASS, 2 FAIL, 1 ignored; failed ASR retry wait and existing power fallback test |
+| Real development API and Playwright UI | PASS with deterministic executable fixture; light/dark model round-trip and adapter switches preserve timeout and clear unsupported fields |
+| Full workspace tests | BLOCKED: admin 3530 PASS, 2 FAIL, 1 ignored; same ASR retry wait and existing power fallback failures |
 | ASR retry isolated reproduction | FAIL: existing two-second running-task assertion; no ASR production changes made |
 | Power fallback failure attribution | Existing test hardcodes 8800; an unrelated pre-existing Node service listens there and returns 404 |
-| Full changed-line coverage | INCOMPLETE: attempted with instrumentation; existing voice-wake tests remained waiting over 60 seconds and output stalled; terminated only this owned coverage process tree after more than ten minutes. No 90% claim |
-| Real OpenCode free-model response/continuation | BLOCKED: no JSON before 55-second probe deadlines |
+| Full changed-line coverage | BLOCKED: complete instrumented admin run ended with the same two unrelated test failures; make coverage-changed did not pass |
+| P2 changed-line coverage measurement | 93.33% (28/30) versus fe182827; recovered LCOV from the complete instrumented run, then coverage-diff passed 90%. This does not turn the failed test/preflight command into a pass |
+| Real installed OpenCode through development API | PASS: configured deepseek/deepseek-flash new session, memory continuation, explicit model, exported directory and cancellation/process cleanup |
+| Real OpenCode free-model response/continuation | BLOCKED: latest bounded probe logged Free usage limit reached; no JSON before the 45-second deadline |
 | Remote CI | NOT_VERIFIED: repository CI inspector requires GITHUB_TOKEN |
 
 Round 4: narrowed the OpenCode event discriminator to its known event names so custom CLI `assistant_final` events carrying sessionID still use the existing generic parser. Added and passed the compatibility regression. Rechecked complete diff/status and all untracked additions. The final backend Clippy gate passes; remaining real-model, workspace-environment and coverage blockers are explicit rather than hidden or weakened assertions.
+
+P2 round 1: reproduced the custom error regression before fixing it. Restricted both streaming and fallback native parsers to OpenCode, preserved stderr/timeout diagnostics and removed unsupported settings from OpenCode forms. Focused tests and light/dark UI passed. Independent Standards/Spec review found no further code defects, but real acceptance exposed a work-directory mismatch even with relative `--dir .`.
+
+P2 round 2: resolved the directory to an absolute path before launching OpenCode. The installed CLI now passes real new-session, memory continuation, directory-export and cancellation acceptance through development Bifrost. The directory handling follows the [OpenCode 1.19.3 run command](https://github.com/anomalyco/opencode/blob/v1.19.3/packages/opencode/src/cli/cmd/run.ts#L323). Regression API tests preserve both custom and stderr-only errors. Workspace Clippy passes; full tests and the unfiltered coverage preflight still fail on unchanged ASR/power tests. No production bot was enabled or service replaced.

@@ -6584,7 +6584,9 @@ async fn stdout_event_capture_keeps_only_the_latest_bounded_live_events() {
         .spawn()
         .unwrap();
     let stdout = child.stdout.take().unwrap();
-    let (_, events) = read_stdout_events(stdout, None).await.unwrap();
+    let (_, events) = read_stdout_events(stdout, None, DEFAULT_ADAPTER.into())
+        .await
+        .unwrap();
     child.wait().await.unwrap();
 
     assert_eq!(events.len(), MAX_CAPTURED_EVENTS);
