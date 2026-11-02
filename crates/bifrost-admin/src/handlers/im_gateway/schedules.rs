@@ -1015,13 +1015,7 @@ fn schedule_conversation_ref_for_adapter<'a>(
         return None;
     }
 
-    if matches!(
-        adapter,
-        "codex"
-            | crate::im_gateway::external_cli::TRAEX_ADAPTER
-            | crate::im_gateway::external_cli::CLAUDE_CODE_ADAPTER
-            | crate::im_gateway::external_cli::OPENCODE_ADAPTER
-    ) {
+    if crate::im_gateway::external_cli::supports_external_cli_thread_resume(adapter) {
         return conversation_ref
             .thread_id
             .as_deref()
@@ -1041,13 +1035,7 @@ fn apply_schedule_conversation_ref_to_request(
     else {
         return;
     };
-    if matches!(
-        adapter,
-        "codex"
-            | crate::im_gateway::external_cli::TRAEX_ADAPTER
-            | crate::im_gateway::external_cli::CLAUDE_CODE_ADAPTER
-            | crate::im_gateway::external_cli::OPENCODE_ADAPTER
-    ) {
+    if crate::im_gateway::external_cli::supports_external_cli_thread_resume(adapter) {
         if let Some(thread_id) = conversation_ref
             .thread_id
             .as_deref()
@@ -1065,13 +1053,7 @@ pub(super) fn schedule_conversation_ref_from_external_result(
 ) -> Option<crate::im_gateway::types::ScheduleConversationRef> {
     let now = now_ms();
 
-    if matches!(
-        adapter,
-        "codex"
-            | crate::im_gateway::external_cli::TRAEX_ADAPTER
-            | crate::im_gateway::external_cli::CLAUDE_CODE_ADAPTER
-            | crate::im_gateway::external_cli::OPENCODE_ADAPTER
-    ) {
+    if crate::im_gateway::external_cli::supports_external_cli_thread_resume(adapter) {
         let thread_id = result_string_field(result, &["threadId", "thread_id"])?;
         return Some(crate::im_gateway::types::ScheduleConversationRef {
             adapter: adapter.to_string(),

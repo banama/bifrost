@@ -151,6 +151,9 @@ pub(super) fn parse_event(
                 .get("reason")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
+            // Only these finish reasons end the assistant turn; "tool-calls" and
+            // any reason OpenCode adds later keep the run open. A run that never
+            // reaches a terminal step fails closed instead of returning partial text.
             if matches!(reason, "stop" | "length" | "content-filter") {
                 (
                     ExternalCliProgressEventType::RunFinished,

@@ -2735,9 +2735,8 @@ impl ExternalCliRuntime {
             };
             let status = if was_stopped {
                 ExternalCliRunStatus::Stopped
-            } else if request.adapter == OPENCODE_ADAPTER
-                && command_output.status == ExternalCliRunStatus::Succeeded
-                && !opencode::completed_successfully(&events)
+            } else if command_output.status == ExternalCliRunStatus::Succeeded
+                && !adapter_reported_success(&request.adapter, &events)
             {
                 ExternalCliRunStatus::Failed
             } else {
@@ -4458,6 +4457,14 @@ pub fn supports_external_cli_model_slash(adapter: &str) -> bool {
 
 pub fn supports_external_cli_fast_slash(adapter: &str) -> bool {
     adapter.trim() == DEFAULT_ADAPTER
+}
+
+/// Adapters that expose a conversation/thread id we can pass back to the CLI.
+pub fn supports_external_cli_thread_resume(adapter: &str) -> bool {
+    matches!(
+        adapter.trim(),
+        DEFAULT_ADAPTER | TRAEX_ADAPTER | CLAUDE_CODE_ADAPTER | OPENCODE_ADAPTER
+    )
 }
 
 fn default_claude_code_model_catalog() -> Vec<ExternalCliModelInfo> {
@@ -7448,6 +7455,15 @@ fn accumulate_diff_block_stats(
     *deleted += *block_deleted - block_modified;
     *block_added = 0;
     *block_deleted = 0;
+}
+
+/// Adapters with a fail-closed JSON protocol must prove a completed response;
+/// a zero exit code alone is not success.
+fn adapter_reported_success(adapter: &str, events: &[ExternalCliProgressEvent]) -> bool {
+    match adapter {
+        OPENCODE_ADAPTER => opencode::completed_successfully(events),
+        _ => true,
+    }
 }
 
 fn is_codex_like_adapter(adapter: &str) -> bool {

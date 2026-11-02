@@ -2665,13 +2665,7 @@ pub(in crate::handlers::im_gateway) fn apply_external_cli_resume_metadata(
     request: &mut crate::im_gateway::external_cli::ExternalCliRunRequest,
     metadata: &std::collections::BTreeMap<String, String>,
 ) {
-    if !matches!(
-        request.adapter.as_str(),
-        "codex"
-            | crate::im_gateway::external_cli::TRAEX_ADAPTER
-            | crate::im_gateway::external_cli::CLAUDE_CODE_ADAPTER
-            | crate::im_gateway::external_cli::OPENCODE_ADAPTER
-    ) {
+    if !crate::im_gateway::external_cli::supports_external_cli_thread_resume(&request.adapter) {
         return;
     }
     if request

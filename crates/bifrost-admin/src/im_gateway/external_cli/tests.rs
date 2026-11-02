@@ -7213,3 +7213,19 @@ fn retired_builtin_ids_cannot_be_implicitly_replaced_by_default_insertion() {
         store.save(migrated).unwrap();
     }
 }
+
+#[test]
+fn thread_resume_support_covers_session_aware_adapters_only() {
+    for adapter in [
+        DEFAULT_ADAPTER,
+        TRAEX_ADAPTER,
+        CLAUDE_CODE_ADAPTER,
+        OPENCODE_ADAPTER,
+        " opencode ",
+    ] {
+        assert!(supports_external_cli_thread_resume(adapter), "{adapter}");
+    }
+    for adapter in ["", "custom", "shell"] {
+        assert!(!supports_external_cli_thread_resume(adapter), "{adapter}");
+    }
+}
