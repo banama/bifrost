@@ -224,11 +224,7 @@ pub(super) fn parse_event(
 }
 
 pub(super) fn completed_successfully(events: &[ExternalCliProgressEvent]) -> bool {
-    events.iter().any(|e| {
-        e.event_type == ExternalCliProgressEventType::RunFinished && !e.content.trim().is_empty()
-    }) && !events
-        .iter()
-        .any(|e| e.event_type == ExternalCliProgressEventType::RunFailed)
+    fail_closed_completed(events)
 }
 
 pub(super) fn terminal_response(
@@ -236,26 +232,12 @@ pub(super) fn terminal_response(
     status: ExternalCliRunStatus,
     stderr: &str,
 ) -> String {
-    if let Some(error) = events
-        .iter()
-        .rev()
-        .find(|e| e.event_type == ExternalCliProgressEventType::RunFailed)
-    {
-        return error.content.clone();
-    }
-    if status == ExternalCliRunStatus::Succeeded {
-        if let Some(event) = events.iter().rev().find(|e| {
-            e.event_type == ExternalCliProgressEventType::RunFinished
-                && !e.content.trim().is_empty()
-        }) {
-            return event.content.clone();
-        }
-    }
-    if status == ExternalCliRunStatus::Failed && stderr.trim().is_empty() {
-        return "OpenCode exited without a completed text response.".into();
-    }
-    // Preserve stderr and timeout diagnostics; raw protocol JSON is never a reply.
-    visible_terminal_response(status, String::new(), "", stderr, events)
+    fail_closed_terminal_response(
+        events,
+        status,
+        stderr,
+        "OpenCode exited without a completed text response.",
+    )
 }
 
 #[cfg(test)]

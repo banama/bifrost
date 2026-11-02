@@ -51,7 +51,12 @@ const ADAPTER_OPTIONS = [
   { label: "Traex CLI", value: "traex" },
   { label: "Claude Code", value: "claude_code" },
   { label: "OpenCode", value: "opencode" },
+  { label: "Antigravity CLI", value: "antigravity" },
 ];
+
+// These adapters own their command line and permission policy; forwarding
+// foreign flags would break their native protocol.
+const NATIVE_PROTOCOL_ADAPTERS = new Set(["opencode", "antigravity"]);
 
 function getDeliveryOptions(t: TFunction) {
   return [
@@ -108,6 +113,7 @@ function formToRunner(
 ): ExternalCliAgentSettings {
   const args = lines(values.args);
   const adapter = String(values.adapter || "codex").trim() || "codex";
+  const usesNativeProtocol = NATIVE_PROTOCOL_ADAPTERS.has(adapter);
 
   return {
     enabled: Boolean(values.enabled),
@@ -117,9 +123,9 @@ function formToRunner(
       ...(previous?.adapter === adapter ? previous.adapterConfig : {}),
       model: String(values.model || "").trim() || undefined,
       executable: String(values.executable || "").trim() || undefined,
-      args: adapter !== "opencode" && args.length ? args : undefined,
+      args: !usesNativeProtocol && args.length ? args : undefined,
       permissionMode:
-        adapter !== "opencode" &&
+        !usesNativeProtocol &&
         values.permissionMode &&
         String(values.permissionMode).trim() !== "default"
           ? String(values.permissionMode).trim()
@@ -580,7 +586,7 @@ export default function ExternalCliPanel({
           <Form.Item name="model" label={t("imGateway.externalCli.model")}>
             <Input placeholder="provider/model" />
           </Form.Item>
-          {runnerAdapter !== "opencode" && (
+          {!NATIVE_PROTOCOL_ADAPTERS.has(String(runnerAdapter || "")) && (
             <>
               <Form.Item
                 name="args"

@@ -7221,6 +7221,7 @@ fn thread_resume_support_covers_session_aware_adapters_only() {
         TRAEX_ADAPTER,
         CLAUDE_CODE_ADAPTER,
         OPENCODE_ADAPTER,
+        ANTIGRAVITY_ADAPTER,
         " opencode ",
     ] {
         assert!(supports_external_cli_thread_resume(adapter), "{adapter}");

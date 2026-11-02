@@ -1148,6 +1148,7 @@ pub(super) fn is_im_progress_card_external_adapter(adapter: &str) -> bool {
             | crate::im_gateway::external_cli::TRAEX_ADAPTER
             | crate::im_gateway::external_cli::CLAUDE_CODE_ADAPTER
             | crate::im_gateway::external_cli::OPENCODE_ADAPTER
+            | crate::im_gateway::external_cli::ANTIGRAVITY_ADAPTER
     )
 }
 
