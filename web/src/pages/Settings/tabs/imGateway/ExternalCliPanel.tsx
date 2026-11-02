@@ -50,7 +50,13 @@ const ADAPTER_OPTIONS = [
   { label: "Codex CLI", value: "codex" },
   { label: "Traex CLI", value: "traex" },
   { label: "Claude Code", value: "claude_code" },
+  { label: "OpenCode", value: "opencode" },
+  { label: "Antigravity CLI", value: "antigravity" },
 ];
+
+// These adapters own their command line and permission policy; forwarding
+// foreign flags would break their native protocol.
+const NATIVE_PROTOCOL_ADAPTERS = new Set(["opencode", "antigravity"]);
 
 function getDeliveryOptions(t: TFunction) {
   return [
@@ -89,6 +95,7 @@ function runnerToFormValues(runner: ExternalCliAgentSettings) {
     enabled: runner.enabled,
     adapter: runner.adapter,
     executable: runner.adapterConfig?.executable,
+    model: runner.adapterConfig?.model,
     args: runner.adapterConfig?.args?.join("\n"),
     permissionMode:
       runner.adapterConfig?.permissionMode && runner.adapterConfig.permissionMode !== "default"
@@ -100,25 +107,35 @@ function runnerToFormValues(runner: ExternalCliAgentSettings) {
   };
 }
 
-function formToRunner(values: Record<string, unknown>): ExternalCliAgentSettings {
+function formToRunner(
+  values: Record<string, unknown>,
+  previous?: ExternalCliAgentSettings,
+): ExternalCliAgentSettings {
   const args = lines(values.args);
   const adapter = String(values.adapter || "codex").trim() || "codex";
+  const usesNativeProtocol = NATIVE_PROTOCOL_ADAPTERS.has(adapter);
 
   return {
     enabled: Boolean(values.enabled),
     adapter,
     instructions: String(values.instructions || "").trim() || undefined,
     adapterConfig: {
-      ...(values.executable ? { executable: String(values.executable).trim() } : {}),
-      ...(args.length ? { args } : {}),
-      ...(values.permissionMode && String(values.permissionMode).trim() !== "default"
-        ? { permissionMode: String(values.permissionMode).trim() }
-        : {}),
+      ...(previous?.adapter === adapter ? previous.adapterConfig : {}),
+      model: String(values.model || "").trim() || undefined,
+      executable: String(values.executable || "").trim() || undefined,
+      args: !usesNativeProtocol && args.length ? args : undefined,
+      permissionMode:
+        !usesNativeProtocol &&
+        values.permissionMode &&
+        String(values.permissionMode).trim() !== "default"
+          ? String(values.permissionMode).trim()
+          : undefined,
     },
     injectBifrostTools: false,
     skillPaths: lines(values.skillPaths),
     deliveryMode:
-      (values.deliveryMode as ExternalCliAgentSettings["deliveryMode"]) || "final_reply",
+      (values.deliveryMode as ExternalCliAgentSettings["deliveryMode"]) ||
+      "final_reply",
   };
 }
 
@@ -143,6 +160,7 @@ export default function ExternalCliPanel({
   const [runnerModalOpen, setRunnerModalOpen] = useState(false);
   const [editingRunnerId, setEditingRunnerId] = useState<string | null>(null);
   const [runnerForm] = Form.useForm();
+  const runnerAdapter = Form.useWatch("adapter", runnerForm);
   const [channelForm] = Form.useForm();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -243,7 +261,7 @@ export default function ExternalCliPanel({
         return;
       }
       const runners = { ...config.runners };
-      runners[runnerId] = formToRunner(values);
+      runners[runnerId] = formToRunner(values, config.runners[runnerId]);
       const next = {
         ...config,
         defaultRunnerId: config.defaultRunnerId || runnerId,
@@ -559,27 +577,69 @@ export default function ExternalCliPanel({
           <Form.Item name="adapter" label={t("imGateway.externalCli.adapter")}>
             <Select options={ADAPTER_OPTIONS} />
           </Form.Item>
-                  <Form.Item name="executable" label={t("imGateway.externalCli.executable")}>
-                    <Input placeholder="Codex" />
-                  </Form.Item>
-                  <Form.Item name="args" label={t("imGateway.externalCli.arguments")}>
-                    <Input.TextArea rows={3} placeholder={t("imGateway.externalCli.argumentsPlaceholder")} />
-                  </Form.Item>
-                  <Form.Item name="permissionMode" label={t("imGateway.externalCli.permissionMode")}>
-                    <Select
-                      allowClear
-                      options={[
-                        { label: t("imGateway.externalCli.permHeadlessDefault"), value: "" },
-                        { label: t("imGateway.externalCli.permPlan"), value: "plan" },
-                        { label: t("imGateway.externalCli.permBypass"), value: "bypass_permissions" },
-                        { label: t("imGateway.externalCli.permAuto"), value: "auto" },
-                        { label: t("imGateway.externalCli.permCustom"), value: "custom" },
-                      ]}
-                    />
-                  </Form.Item>
-                  <Form.Item name="skillPaths" label={t("imGateway.externalCli.skillPaths")}>
-                    <Input.TextArea rows={3} placeholder={t("imGateway.externalCli.skillPathsPlaceholder")} />
-                  </Form.Item>
+          <Form.Item
+            name="executable"
+            label={t("imGateway.externalCli.executable")}
+          >
+            <Input placeholder="Codex" />
+          </Form.Item>
+          <Form.Item name="model" label={t("imGateway.externalCli.model")}>
+            <Input placeholder="provider/model" />
+          </Form.Item>
+          {!NATIVE_PROTOCOL_ADAPTERS.has(String(runnerAdapter || "")) && (
+            <>
+              <Form.Item
+                name="args"
+                preserve={false}
+                label={t("imGateway.externalCli.arguments")}
+              >
+                <Input.TextArea
+                  rows={3}
+                  placeholder={t("imGateway.externalCli.argumentsPlaceholder")}
+                />
+              </Form.Item>
+              <Form.Item
+                name="permissionMode"
+                preserve={false}
+                label={t("imGateway.externalCli.permissionMode")}
+              >
+                <Select
+                  allowClear
+                  options={[
+                    {
+                      label: t("imGateway.externalCli.permHeadlessDefault"),
+                      value: "",
+                    },
+                    {
+                      label: t("imGateway.externalCli.permPlan"),
+                      value: "plan",
+                    },
+                    {
+                      label: t("imGateway.externalCli.permBypass"),
+                      value: "bypass_permissions",
+                    },
+                    {
+                      label: t("imGateway.externalCli.permAuto"),
+                      value: "auto",
+                    },
+                    {
+                      label: t("imGateway.externalCli.permCustom"),
+                      value: "custom",
+                    },
+                  ]}
+                />
+              </Form.Item>
+            </>
+          )}
+          <Form.Item
+            name="skillPaths"
+            label={t("imGateway.externalCli.skillPaths")}
+          >
+            <Input.TextArea
+              rows={3}
+              placeholder={t("imGateway.externalCli.skillPathsPlaceholder")}
+            />
+          </Form.Item>
           <Form.Item name="deliveryMode" label={t("imGateway.externalCli.defaultImDelivery")}>
             <Select options={deliveryOptions} />
           </Form.Item>

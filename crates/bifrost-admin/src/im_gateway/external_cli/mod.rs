@@ -18,7 +18,9 @@ use tokio::time::{sleep, timeout};
 use bifrost_agent::{PlanStep, PlanStepStatus};
 use bifrost_core::EXTERNAL_CLI_WORKER_ENV;
 
+mod antigravity;
 mod local_sessions;
+mod opencode;
 #[cfg(test)]
 pub(crate) use local_sessions::local_session_test_env_lock;
 pub use local_sessions::{
@@ -47,6 +49,10 @@ const DEFAULT_RUNTIME: &str = "external_cli";
 const DEFAULT_ADAPTER: &str = "codex";
 pub const CODEX_FAST_SERVICE_TIER: &str = "fast";
 pub const CODEX_STANDARD_SERVICE_TIER: &str = "default";
+pub const OPENCODE_ADAPTER: &str = "opencode";
+pub const DEFAULT_OPENCODE_RUNNER_ID: &str = "OpenCode";
+pub const ANTIGRAVITY_ADAPTER: &str = "antigravity";
+pub const DEFAULT_ANTIGRAVITY_RUNNER_ID: &str = "Antigravity";
 pub const TRAEX_ADAPTER: &str = "traex";
 pub const DEFAULT_CODEX_RUNNER_ID: &str = "Codex";
 pub const DEFAULT_TRAEX_RUNNER_ID: &str = "Traex";
@@ -2703,7 +2709,7 @@ impl ExternalCliRuntime {
                 ExternalCliTransport::Exec => {
                     run_command(
                         &run_id,
-                        session_key_for_stop.as_deref(),
+                        &request,
                         spec.clone(),
                         prompt.clone(),
                         stop_marker_path.clone(),
@@ -2725,24 +2731,30 @@ impl ExternalCliRuntime {
                     title: Some("Stopped".to_string()),
                     raw: serde_json::json!({ "type": "run_stopped" }),
                 }]
+            } else if command_output.events.is_empty() {
+                parse_progress_events_for_adapter(&stdout_text, &request.adapter)
             } else {
-                if command_output.events.is_empty() {
-                    parse_progress_events(&stdout_text)
-                } else {
-                    command_output.events.clone()
-                }
-            };
-            let response = if was_stopped {
-                "External CLI run was stopped by request.".to_string()
-            } else {
-                final_response(&last_message_path, &stdout_text, &events).await?
+                command_output.events.clone()
             };
             let status = if was_stopped {
                 ExternalCliRunStatus::Stopped
+            } else if command_output.status == ExternalCliRunStatus::Succeeded
+                && !adapter_reported_success(&request.adapter, &events)
+            {
+                ExternalCliRunStatus::Failed
             } else {
                 command_output.status
             };
             let stderr_text = String::from_utf8_lossy(&command_output.stderr).to_string();
+            let response = if !was_stopped && request.adapter == OPENCODE_ADAPTER {
+                opencode::terminal_response(&events, status.clone(), &stderr_text)
+            } else if !was_stopped && request.adapter == ANTIGRAVITY_ADAPTER {
+                antigravity::terminal_response(&events, status.clone(), &stderr_text)
+            } else if was_stopped {
+                "External CLI run was stopped by request.".to_string()
+            } else {
+                final_response(&last_message_path, &stdout_text, &events).await?
+            };
             let response = visible_terminal_response(
                 status.clone(),
                 response,
@@ -3518,6 +3530,7 @@ fn append_external_cli_metadata(
                 .or_else(|| event.raw.get("threadId"))
                 .or_else(|| event.raw.get("session_id"))
                 .or_else(|| event.raw.get("sessionId"))
+                .or_else(|| event.raw.get("sessionID"))
                 .and_then(serde_json::Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
@@ -3547,6 +3560,7 @@ pub fn merge_external_cli_progress_metadata(
             .or_else(|| event.raw.get("threadId"))
             .or_else(|| event.raw.get("session_id"))
             .or_else(|| event.raw.get("sessionId"))
+            .or_else(|| event.raw.get("sessionID"))
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -3936,6 +3950,8 @@ pub async fn load_external_cli_model_catalog(
     let default_executable = match adapter {
         DEFAULT_ADAPTER => DEFAULT_ADAPTER,
         TRAEX_ADAPTER => TRAEX_ADAPTER,
+        OPENCODE_ADAPTER => OPENCODE_ADAPTER,
+        ANTIGRAVITY_ADAPTER => "agy",
         _ => {
             return Err(format!(
                 "adapter `{adapter}` does not support model catalog"
@@ -3949,9 +3965,12 @@ pub async fn load_external_cli_model_catalog(
         .filter(|value| !value.is_empty())
         .unwrap_or(default_executable);
     let mut command = Command::new(executable);
+    if !matches!(adapter, OPENCODE_ADAPTER | ANTIGRAVITY_ADAPTER) {
+        command.arg("debug");
+    }
     command
-        .arg("debug")
         .arg("models")
+        .kill_on_drop(true)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(work_dir) = work_dir {
@@ -3985,6 +4004,12 @@ pub fn parse_external_cli_model_catalog(
     adapter: &str,
     raw_json: &str,
 ) -> Result<Vec<ExternalCliModelInfo>, String> {
+    if adapter == OPENCODE_ADAPTER {
+        return opencode::parse_model_catalog(raw_json);
+    }
+    if adapter == ANTIGRAVITY_ADAPTER {
+        return antigravity::parse_model_catalog(raw_json);
+    }
     #[derive(Deserialize)]
     struct Catalog {
         #[serde(default)]
@@ -4182,6 +4207,7 @@ pub fn external_cli_effort_options(adapter: &str) -> &'static [&'static str] {
     match adapter.trim() {
         CLAUDE_CODE_ADAPTER => &["low", "medium", "high", "xhigh", "max"],
         DEFAULT_ADAPTER | TRAEX_ADAPTER => &["minimal", "low", "medium", "high", "xhigh"],
+        ANTIGRAVITY_ADAPTER => &["low", "medium", "high"],
         _ => &[],
     }
 }
@@ -4410,6 +4436,14 @@ pub fn external_cli_default_model_label(adapter: &str) -> Option<(&'static str, 
             "Trae default model (not explicitly configured)",
             "trae default",
         )),
+        OPENCODE_ADAPTER => Some((
+            "OpenCode default model (not explicitly configured)",
+            "opencode default",
+        )),
+        ANTIGRAVITY_ADAPTER => Some((
+            "Antigravity default model (not explicitly configured)",
+            "antigravity default",
+        )),
         CLAUDE_CODE_ADAPTER => Some((
             "Claude Code default model (not explicitly configured)",
             "claude code default",
@@ -4423,6 +4457,8 @@ pub fn external_cli_model_adapter_label(adapter: &str) -> &'static str {
         DEFAULT_ADAPTER => "Codex",
         TRAEX_ADAPTER => "Traex",
         CLAUDE_CODE_ADAPTER => "Claude Code",
+        OPENCODE_ADAPTER => "OpenCode",
+        ANTIGRAVITY_ADAPTER => "Antigravity",
         _ => "External CLI",
     }
 }
@@ -4430,12 +4466,28 @@ pub fn external_cli_model_adapter_label(adapter: &str) -> &'static str {
 pub fn supports_external_cli_model_slash(adapter: &str) -> bool {
     matches!(
         adapter.trim(),
-        DEFAULT_ADAPTER | TRAEX_ADAPTER | CLAUDE_CODE_ADAPTER
+        DEFAULT_ADAPTER
+            | TRAEX_ADAPTER
+            | CLAUDE_CODE_ADAPTER
+            | OPENCODE_ADAPTER
+            | ANTIGRAVITY_ADAPTER
     )
 }
 
 pub fn supports_external_cli_fast_slash(adapter: &str) -> bool {
     adapter.trim() == DEFAULT_ADAPTER
+}
+
+/// Adapters that expose a conversation/thread id we can pass back to the CLI.
+pub fn supports_external_cli_thread_resume(adapter: &str) -> bool {
+    matches!(
+        adapter.trim(),
+        DEFAULT_ADAPTER
+            | TRAEX_ADAPTER
+            | CLAUDE_CODE_ADAPTER
+            | OPENCODE_ADAPTER
+            | ANTIGRAVITY_ADAPTER
+    )
 }
 
 fn default_claude_code_model_catalog() -> Vec<ExternalCliModelInfo> {
@@ -5436,12 +5488,13 @@ fn plan_status_count(plan: &[serde_json::Value], status: &str) -> u64 {
 
 async fn run_command(
     run_id: &str,
-    session_key: Option<&str>,
+    request: &ExternalCliRunRequest,
     spec: CommandSpec,
     prompt: String,
     stop_marker_path: PathBuf,
     progress_tx: Option<mpsc::Sender<ExternalCliProgressEvent>>,
 ) -> Result<CommandOutput, String> {
+    let session_key = request.session_key.as_deref();
     let (stdout_path, stderr_path) = external_cli_log_paths(&stop_marker_path);
     let mut command = Command::new(&spec.executable);
     command
@@ -5468,8 +5521,13 @@ async fn run_command(
         ACTIVE_SESSIONS.insert(session_key.to_string(), run_id.to_string());
     }
     if let Some(mut stdin) = child.stdin.take() {
+        let payload = if request.adapter == ANTIGRAVITY_ADAPTER {
+            antigravity::stdin_prompt(&prompt)
+        } else {
+            prompt.as_bytes().to_vec()
+        };
         stdin
-            .write_all(prompt.as_bytes())
+            .write_all(&payload)
             .await
             .map_err(|error| format!("write prompt to external cli failed: {error}"))?;
     }
@@ -5486,7 +5544,11 @@ async fn run_command(
         tee_external_cli_output(stdout, stdout_path.clone(), "stdout").await?;
     let (stderr, stderr_tee_task) =
         tee_external_cli_output(stderr, stderr_path.clone(), "stderr").await?;
-    let stdout_task = tokio::spawn(read_stdout_events(stdout, progress_tx));
+    let stdout_task = tokio::spawn(read_stdout_events(
+        stdout,
+        progress_tx,
+        request.adapter.clone(),
+    ));
     let stderr_task = tokio::spawn(read_stderr_lines(stderr));
 
     let wait_result = {
@@ -5783,6 +5845,7 @@ async fn wait_for_stop_marker(path: PathBuf) {
 async fn read_stdout_events<R>(
     stdout: R,
     progress_tx: Option<mpsc::Sender<ExternalCliProgressEvent>>,
+    adapter: String,
 ) -> Result<(Vec<u8>, Vec<ExternalCliProgressEvent>), String>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -5790,7 +5853,7 @@ where
     let mut lines = tokio::io::BufReader::new(stdout).lines();
     let mut bytes = Vec::new();
     let mut events = Vec::new();
-    let mut parse_state = ExternalCliParseState::default();
+    let mut parse_state = ExternalCliParseState::for_adapter(&adapter);
     let mut tool_started_at: HashMap<String, u64> = HashMap::new();
     while let Some(line) = lines
         .next_line()
@@ -6660,8 +6723,12 @@ fn windows_process_exists(pid: u32) -> bool {
 }
 
 pub fn parse_progress_events(stdout: &str) -> Vec<ExternalCliProgressEvent> {
+    parse_progress_events_for_adapter(stdout, "")
+}
+
+fn parse_progress_events_for_adapter(stdout: &str, adapter: &str) -> Vec<ExternalCliProgressEvent> {
     let mut events = Vec::new();
-    let mut state = ExternalCliParseState::default();
+    let mut state = ExternalCliParseState::for_adapter(adapter);
     for line in stdout.lines() {
         if let Some(event) = parse_progress_event_line_with_state(line, &mut state) {
             events.extend(expand_subagent_progress_event(event));
@@ -6744,6 +6811,18 @@ pub(super) fn expand_subagent_progress_event(
 #[derive(Default)]
 struct ExternalCliParseState {
     claude_tools: BTreeMap<String, ClaudeCodeToolContext>,
+    opencode: Option<opencode::ParseState>,
+    antigravity: Option<antigravity::ParseState>,
+}
+
+impl ExternalCliParseState {
+    fn for_adapter(adapter: &str) -> Self {
+        Self {
+            opencode: (adapter == OPENCODE_ADAPTER).then(opencode::ParseState::default),
+            antigravity: (adapter == ANTIGRAVITY_ADAPTER).then(antigravity::ParseState::default),
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -6769,6 +6848,16 @@ fn parse_progress_event(
     raw: serde_json::Value,
     state: &mut ExternalCliParseState,
 ) -> Option<ExternalCliProgressEvent> {
+    if let Some(opencode) = state.opencode.as_mut() {
+        if opencode::is_event(&raw) {
+            return opencode::parse_event(raw, opencode);
+        }
+    }
+    if let Some(antigravity) = state.antigravity.as_mut() {
+        if antigravity::is_event(&raw) {
+            return antigravity::parse_event(raw, antigravity);
+        }
+    }
     let event_type = value_text(&raw, &["type", "event", "kind"])?;
     if let Some(event) = parse_codex_cli_event(&event_type, &raw) {
         return Some(event);
@@ -7406,8 +7495,62 @@ fn accumulate_diff_block_stats(
 fn is_codex_like_adapter(adapter: &str) -> bool {
     matches!(
         adapter,
-        DEFAULT_ADAPTER | TRAEX_ADAPTER | CLAUDE_CODE_ADAPTER
+        DEFAULT_ADAPTER
+            | TRAEX_ADAPTER
+            | CLAUDE_CODE_ADAPTER
+            | OPENCODE_ADAPTER
+            | ANTIGRAVITY_ADAPTER
     )
+}
+
+/// Shared by native JSON adapters (OpenCode, Antigravity): success needs a
+/// non-empty terminal response and no failure event.
+fn fail_closed_completed(events: &[ExternalCliProgressEvent]) -> bool {
+    events.iter().any(|event| {
+        event.event_type == ExternalCliProgressEventType::RunFinished
+            && !event.content.trim().is_empty()
+    }) && !events
+        .iter()
+        .any(|event| event.event_type == ExternalCliProgressEventType::RunFailed)
+}
+
+/// The failure message wins; otherwise the terminal text; otherwise stderr or
+/// timeout diagnostics. Raw protocol JSON is never used as a reply.
+fn fail_closed_terminal_response(
+    events: &[ExternalCliProgressEvent],
+    status: ExternalCliRunStatus,
+    stderr: &str,
+    missing_response: &str,
+) -> String {
+    if let Some(error) = events
+        .iter()
+        .rev()
+        .find(|event| event.event_type == ExternalCliProgressEventType::RunFailed)
+    {
+        return error.content.clone();
+    }
+    if status == ExternalCliRunStatus::Succeeded {
+        if let Some(event) = events.iter().rev().find(|event| {
+            event.event_type == ExternalCliProgressEventType::RunFinished
+                && !event.content.trim().is_empty()
+        }) {
+            return event.content.clone();
+        }
+    }
+    if status == ExternalCliRunStatus::Failed && stderr.trim().is_empty() {
+        return missing_response.to_string();
+    }
+    visible_terminal_response(status, String::new(), "", stderr, events)
+}
+
+/// Adapters with a fail-closed JSON protocol must prove a completed response;
+/// a zero exit code alone is not success.
+fn adapter_reported_success(adapter: &str, events: &[ExternalCliProgressEvent]) -> bool {
+    match adapter {
+        OPENCODE_ADAPTER => opencode::completed_successfully(events),
+        ANTIGRAVITY_ADAPTER => antigravity::completed_successfully(events),
+        _ => true,
+    }
 }
 
 fn parse_codex_cli_event(
@@ -8218,6 +8361,12 @@ fn default_external_cli_runners() -> BTreeMap<String, ExternalCliAgentSettings> 
 
 fn ensure_default_external_cli_runners(runners: &mut BTreeMap<String, ExternalCliAgentSettings>) {
     runners
+        .entry(DEFAULT_OPENCODE_RUNNER_ID.to_string())
+        .or_insert_with(|| default_runner_settings(OPENCODE_ADAPTER));
+    runners
+        .entry(DEFAULT_ANTIGRAVITY_RUNNER_ID.to_string())
+        .or_insert_with(|| default_runner_settings(ANTIGRAVITY_ADAPTER));
+    runners
         .entry(DEFAULT_CODEX_RUNNER_ID.to_string())
         .or_insert_with(|| default_runner_settings(DEFAULT_ADAPTER));
     runners
@@ -8321,6 +8470,16 @@ pub fn canonical_external_cli_runner_id(
         return runner_id.to_string();
     }
     match runner_id.to_ascii_lowercase().as_str() {
+        "opencode" | "open-code" | "open code"
+            if config.runners.contains_key(DEFAULT_OPENCODE_RUNNER_ID) =>
+        {
+            DEFAULT_OPENCODE_RUNNER_ID.to_string()
+        }
+        "antigravity" | "antigravity-cli" | "antigravity cli" | "agy"
+            if config.runners.contains_key(DEFAULT_ANTIGRAVITY_RUNNER_ID) =>
+        {
+            DEFAULT_ANTIGRAVITY_RUNNER_ID.to_string()
+        }
         "codex" if config.runners.contains_key(DEFAULT_CODEX_RUNNER_ID) => {
             DEFAULT_CODEX_RUNNER_ID.to_string()
         }

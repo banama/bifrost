@@ -100,6 +100,10 @@ pub(super) fn build_command_spec(
                 args.push(session_id);
             }
         }
+    } else if request.adapter == OPENCODE_ADAPTER {
+        opencode::configure_args(&mut args, request)?;
+    } else if request.adapter == ANTIGRAVITY_ADAPTER {
+        antigravity::configure_args(&mut args, request)?;
     } else if config.executable.is_none() && args.is_empty() {
         return Err(format!(
             "adapter '{}' requires explicit adapterConfig.args",
@@ -146,6 +150,7 @@ fn append_claude_code_config_args(args: &mut Vec<String>, config: &ExternalCliAd
 fn default_executable_for_adapter(adapter: &str) -> &str {
     match adapter {
         CLAUDE_CODE_ADAPTER => "claude",
+        ANTIGRAVITY_ADAPTER => "agy",
         other => other,
     }
 }

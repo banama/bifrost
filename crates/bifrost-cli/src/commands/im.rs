@@ -20,7 +20,7 @@ use bifrost_core::{text::truncate_chars_with_suffix, Result};
 
 const IM_GATEWAY_API_PREFIX: &str = "/_bifrost/api/im-gateway";
 const DEFAULT_IM_PROVIDER_ID: &str = "feishu-main";
-const DEFAULT_BUILTIN_RUNNERS_HINT: &str = "codex, traex, Claude Code";
+const DEFAULT_BUILTIN_RUNNERS_HINT: &str = "codex, traex, Claude Code, OpenCode, Antigravity";
 
 pub fn handle_im_command(host: &str, port: u16, args: &[String]) -> Result<()> {
     if args.is_empty() {
@@ -642,6 +642,10 @@ fn find_runner_choice<'a>(
                         || runner.id.eq_ignore_ascii_case("Claude Code")
                 })
             }
+            "antigravity" | "antigravity-cli" | "antigravity cli" | "agy" => runners
+                .iter()
+                .copied()
+                .find(|runner| runner.id.eq_ignore_ascii_case("Antigravity")),
             _ => None,
         })
 }

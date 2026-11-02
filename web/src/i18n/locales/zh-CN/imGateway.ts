@@ -324,6 +324,7 @@ const zhCN: Record<keyof typeof en, string> = {
   "externalCli.baseUrl": "Base URL",
   "externalCli.runTimeoutSeconds": "运行超时（秒）",
   "externalCli.pollIntervalMs": "轮询间隔（ms）",
+  "externalCli.model": "默认模型",
   "externalCli.executable": "可执行文件",
   "externalCli.arguments": "参数",
   "externalCli.argumentsPlaceholder": "每行一个参数",

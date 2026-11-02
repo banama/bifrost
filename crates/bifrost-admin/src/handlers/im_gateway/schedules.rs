@@ -1015,12 +1015,7 @@ fn schedule_conversation_ref_for_adapter<'a>(
         return None;
     }
 
-    if matches!(
-        adapter,
-        "codex"
-            | crate::im_gateway::external_cli::TRAEX_ADAPTER
-            | crate::im_gateway::external_cli::CLAUDE_CODE_ADAPTER
-    ) {
+    if crate::im_gateway::external_cli::supports_external_cli_thread_resume(adapter) {
         return conversation_ref
             .thread_id
             .as_deref()
@@ -1040,12 +1035,7 @@ fn apply_schedule_conversation_ref_to_request(
     else {
         return;
     };
-    if matches!(
-        adapter,
-        "codex"
-            | crate::im_gateway::external_cli::TRAEX_ADAPTER
-            | crate::im_gateway::external_cli::CLAUDE_CODE_ADAPTER
-    ) {
+    if crate::im_gateway::external_cli::supports_external_cli_thread_resume(adapter) {
         if let Some(thread_id) = conversation_ref
             .thread_id
             .as_deref()
@@ -1063,12 +1053,7 @@ pub(super) fn schedule_conversation_ref_from_external_result(
 ) -> Option<crate::im_gateway::types::ScheduleConversationRef> {
     let now = now_ms();
 
-    if matches!(
-        adapter,
-        "codex"
-            | crate::im_gateway::external_cli::TRAEX_ADAPTER
-            | crate::im_gateway::external_cli::CLAUDE_CODE_ADAPTER
-    ) {
+    if crate::im_gateway::external_cli::supports_external_cli_thread_resume(adapter) {
         let thread_id = result_string_field(result, &["threadId", "thread_id"])?;
         return Some(crate::im_gateway::types::ScheduleConversationRef {
             adapter: adapter.to_string(),
@@ -1251,3 +1236,23 @@ pub(super) fn handle_schedule_runs(
 }
 
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod opencode_tests {
+    use super::*;
+    #[test]
+    fn opencode_schedule_keeps_its_own_session() {
+        let conversation = crate::im_gateway::types::ScheduleConversationRef {
+            adapter: "opencode".into(),
+            conversation_id: None,
+            thread_id: Some("ses_schedule".into()),
+            updated_at: 1,
+        };
+        let mut request: crate::im_gateway::external_cli::ExternalCliRunRequest =
+            serde_json::from_value(serde_json::json!({"message":"task", "adapter":"opencode"}))
+                .unwrap();
+        apply_schedule_conversation_ref_to_request(&mut request, "opencode", Some(&conversation));
+        assert_eq!(request.params["threadId"], "ses_schedule");
+        assert!(schedule_conversation_ref_for_adapter("codex", Some(&conversation)).is_none());
+    }
+}

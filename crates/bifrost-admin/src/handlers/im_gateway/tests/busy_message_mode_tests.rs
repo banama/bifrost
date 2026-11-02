@@ -810,3 +810,31 @@ pub(super) fn supported_external_runners_default_to_live_guide() {
         );
     }
 }
+
+#[test]
+fn opencode_runner_resumes_channel_session_without_overriding_explicit_session() {
+    let mut request: crate::im_gateway::external_cli::ExternalCliRunRequest =
+        serde_json::from_value(serde_json::json!({
+            "message":"next", "adapter":"opencode", "operation":"chat"
+        }))
+        .unwrap();
+    let metadata = std::collections::BTreeMap::from([("threadId".into(), "ses_saved".into())]);
+    apply_external_cli_resume_metadata(&mut request, &metadata);
+    assert_eq!(request.params["threadId"], "ses_saved");
+    request.params = serde_json::json!({"threadId":"ses_explicit"});
+    apply_external_cli_resume_metadata(&mut request, &metadata);
+    assert_eq!(request.params["threadId"], "ses_explicit");
+    let settings = crate::im_gateway::external_cli::ExternalCliAgentSettings {
+        adapter: "opencode".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        resolve_external_cli_delivery_mode(
+            crate::im_gateway::types::ImProgressPresentation::MutableCard,
+            &settings,
+            &std::collections::BTreeMap::new(),
+            None
+        ),
+        crate::im_gateway::external_cli::ExternalCliDeliveryMode::ProgressCard
+    );
+}

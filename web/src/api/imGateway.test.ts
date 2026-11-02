@@ -6,13 +6,13 @@ describe("Runner selection after browser Runner retirement", () => {
     const config = {
       defaultRunnerId: "web",
       runners: Object.fromEntries(
-        ["codex", "traex", "claude_code", "custom_cli", "chatgpt_web", "gpt-web"].map(
+        ["codex", "traex", "claude_code", "custom_cli", "opencode", "chatgpt_web", "gpt-web"].map(
           (adapter) => [adapter, { enabled: true, adapter, adapterConfig: {} }],
         ),
       ),
       channels: {},
     } as ExternalCliGatewayConfig;
-    expect(selectableRunnerIds(config)).toEqual(["claude_code", "codex", "custom_cli", "traex"]);
+    expect(selectableRunnerIds(config)).toEqual(["claude_code", "codex", "custom_cli", "opencode", "traex"]);
     expect(config.defaultRunnerId).toBe("web");
     expect(config.runners.chatgpt_web.adapter).toBe("chatgpt_web");
   });

@@ -6584,7 +6584,9 @@ async fn stdout_event_capture_keeps_only_the_latest_bounded_live_events() {
         .spawn()
         .unwrap();
     let stdout = child.stdout.take().unwrap();
-    let (_, events) = read_stdout_events(stdout, None).await.unwrap();
+    let (_, events) = read_stdout_events(stdout, None, DEFAULT_ADAPTER.into())
+        .await
+        .unwrap();
     child.wait().await.unwrap();
 
     assert_eq!(events.len(), MAX_CAPTURED_EVENTS);
@@ -7209,5 +7211,22 @@ fn retired_builtin_ids_cannot_be_implicitly_replaced_by_default_insertion() {
         store.save(migrated.clone()).unwrap();
         migrated.runners.remove(&removed_id);
         store.save(migrated).unwrap();
+    }
+}
+
+#[test]
+fn thread_resume_support_covers_session_aware_adapters_only() {
+    for adapter in [
+        DEFAULT_ADAPTER,
+        TRAEX_ADAPTER,
+        CLAUDE_CODE_ADAPTER,
+        OPENCODE_ADAPTER,
+        ANTIGRAVITY_ADAPTER,
+        " opencode ",
+    ] {
+        assert!(supports_external_cli_thread_resume(adapter), "{adapter}");
+    }
+    for adapter in ["", "custom", "shell"] {
+        assert!(!supports_external_cli_thread_resume(adapter), "{adapter}");
     }
 }
